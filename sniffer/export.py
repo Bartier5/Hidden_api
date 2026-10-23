@@ -47,3 +47,22 @@ def write_csv(rows: list[dict], name: str = "quotes.csv") -> Path:
         writer.writeheader()
         writer.writerows(rows)
     return path
+async def fetch_all_concurrent(
+    client: httpx.AsyncClient,
+    concurrency: int = 5,
+    max_pages: int = 50,
+) -> list[dict]:
+    rows: list[dict] = []
+    next_page = 1
+    finished = False
+    while not finished and next_page <= max_pages:
+        wave = list(range(next_page, min(next_page + concurrency, max_pages + 1)))
+        results = await asyncio.gather(*(fetch_page(client, n) for n in wave))
+        for page_number, data in zip(wave, results):
+            for quote in data["quotes"]:
+                rows.append(flatten(quote, page_number))
+            if not data["has_next"]:
+                finished = True
+        print(f"  wave {wave[0]}-{wave[-1]} done, {len(rows)} rows so far")
+        next_page += concurrency
+    return rows

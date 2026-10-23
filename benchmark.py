@@ -4,15 +4,25 @@ import time
 
 from playwright.async_api import async_playwright
 
-from sniffer.export import fetch_all
-from sniffer.replay import make_client
+from sniffer.export import fetch_all, fetch_all_concurrent
+from sniffer.replay import fetch_page, make_client
 
 BASE = "https://quotes.toscrape.com"
 
 
-async def api_scrape(max_pages: int) -> list[dict]:
+async def warm_up() -> None:
+    async with make_client() as client:
+        await fetch_page(client, 1)
+
+
+async def api_sequential(max_pages: int) -> list[dict]:
     async with make_client() as client:
         return await fetch_all(client, max_pages=max_pages, delay=0)
+
+
+async def api_concurrent(max_pages: int) -> list[dict]:
+    async with make_client() as client:
+        return await fetch_all_concurrent(client, concurrency=5, max_pages=max_pages)
 
 
 async def browser_scrape(max_pages: int) -> list[dict]:
@@ -35,28 +45,40 @@ async def browser_scrape(max_pages: int) -> list[dict]:
     return rows
 
 
+async def timed(coro) -> tuple[list[dict], float]:
+    start = time.perf_counter()
+    rows = await coro
+    return rows, time.perf_counter() - start
+
+
+def authors(rows: list[dict]) -> list[str]:
+    return [r["author"] for r in rows]
+
+
 async def main() -> None:
     pages = int(sys.argv[1]) if len(sys.argv) > 1 else 5
     print(f"Benchmark: {pages} pages\n")
 
-    print("API scrape:")
-    t0 = time.perf_counter()
-    api_rows = await api_scrape(pages)
-    api_time = time.perf_counter() - t0
+    print("Warming up ...")
+    await warm_up()
+
+    print("\nAPI sequential:")
+    seq_rows, seq_time = await timed(api_sequential(pages))
+
+    print("\nAPI concurrent:")
+    con_rows, con_time = await timed(api_concurrent(pages))
 
     print("\nBrowser scrape ...")
-    t1 = time.perf_counter()
-    browser_rows = await browser_scrape(pages)
-    browser_time = time.perf_counter() - t1
-
-    same_count = len(api_rows) == len(browser_rows)
-    same_authors = [r["author"] for r in api_rows] == [r["author"] for r in browser_rows]
+    br_rows, br_time = await timed(browser_scrape(pages))
 
     print("\n--- Results ---")
-    print(f"API:     {len(api_rows)} quotes in {api_time:.2f}s")
-    print(f"Browser: {len(browser_rows)} quotes in {browser_time:.2f}s")
-    print(f"Speedup: {browser_time / api_time:.1f}x")
-    print(f"Same count: {same_count} | Same authors in same order: {same_authors}")
+    print(f"API sequential: {len(seq_rows)} quotes in {seq_time:.2f}s")
+    print(f"API concurrent: {len(con_rows)} quotes in {con_time:.2f}s")
+    print(f"Browser:        {len(br_rows)} quotes in {br_time:.2f}s")
+    print(f"Concurrent vs browser:    {br_time / con_time:.1f}x")
+    print(f"Concurrent vs sequential: {seq_time / con_time:.1f}x")
+    same = authors(seq_rows) == authors(con_rows) == authors(br_rows)
+    print(f"All three identical (authors, same order): {same}")
 
 
 if __name__ == "__main__":

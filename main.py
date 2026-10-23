@@ -1,6 +1,8 @@
 import asyncio
+import json
 import sys
 
+from sniffer.analyze import analyze, save_bodies
 from sniffer.capture import capture, save_log
 
 DEFAULT_URL = "https://quotes.toscrape.com/scroll"
@@ -10,18 +12,25 @@ async def main() -> None:
     url = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_URL
     print(f"Sniffing {url} ...")
     calls = await capture(url)
+    log_path = save_log(calls)
+    print(f"{len(calls)} XHR/fetch calls captured. Log: {log_path}")
 
-    if not calls:
-        print("No XHR/fetch calls captured.")
+    results = analyze(calls)
+    if not results:
+        print("No JSON responses found.")
         return
 
-    for c in calls:
-        tag = "JSON" if c["is_json"] else "    "
-        print(f"[{tag}] {c['method']:<5} {c['status']}  {c['size']:>7} B  {c['url']}")
+    print(f"\n{len(results)} JSON responses, best candidates first:\n")
+    for rank, r in enumerate(results, start=1):
+        print(f"#{rank}  {r['record_count']} records  {r['size']} B")
+        print(f"    url:   {r['url']}")
+        print(f"    shape: {r['shape']}")
+        if r["first_record"] is not None:
+            print(f"    first: {json.dumps(r['first_record'])[:150]}")
+        print()
 
-    path = save_log(calls)
-    json_count = sum(c["is_json"] for c in calls)
-    print(f"\n{len(calls)} calls captured, {json_count} JSON. Saved to {path}")
+    folder = save_bodies(results)
+    print(f"Full bodies saved in {folder}")
 
 
 if __name__ == "__main__":

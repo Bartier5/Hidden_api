@@ -15,18 +15,25 @@ async def capture(url: str, wait_ms: int = 3000) -> list[dict]:
         if request.resource_type not in ("xhr", "fetch"):
             return
         content_type = response.headers.get("content-type", "")
+        is_json = any(t in content_type for t in JSON_TYPES)
+        size = -1
+        body_text = None
         try:
-            size = len(await response.body())
+            raw = await response.body()
+            size = len(raw)
+            if is_json:
+                body_text = raw.decode("utf-8", errors="replace")
         except Exception:
-            size = -1
+            pass
         captured.append(
             {
                 "method": request.method,
                 "url": response.url,
                 "status": response.status,
                 "content_type": content_type,
-                "is_json": any(t in content_type for t in JSON_TYPES),
+                "is_json": is_json,
                 "size": size,
+                "body": body_text,
             }
         )
 
@@ -47,5 +54,6 @@ async def capture(url: str, wait_ms: int = 3000) -> list[dict]:
 def save_log(calls: list[dict], name: str = "capture_log.json") -> Path:
     OUTPUT_DIR.mkdir(exist_ok=True)
     path = OUTPUT_DIR / name
-    path.write_text(json.dumps(calls, indent=2), encoding="utf-8")
+    slim = [{k: v for k, v in c.items() if k != "body"} for c in calls]
+    path.write_text(json.dumps(slim, indent=2), encoding="utf-8")
     return path
